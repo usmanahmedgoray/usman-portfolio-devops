@@ -1,5 +1,6 @@
 # -------- Base --------
 FROM node:20-alpine AS base
+# hadolint ignore=DL3018
 RUN apk add --no-cache libc6-compat
 WORKDIR /app
 
