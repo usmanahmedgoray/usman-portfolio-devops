@@ -5,10 +5,7 @@ services:
     image: portfolio
     ports:
       - "3000:3000"
-    volumes:
-      - .:/app
-      - /app/node_modules
-    command: ["npm", "run", "start"]
+    command: ["node", "server.js"]
     # Health check to ensure the service is running correctly
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000/"]
