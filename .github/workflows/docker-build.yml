@@ -1,36 +1,86 @@
-# name: Build and Push Docker Image
+name: 🚀 Production Build & Push
 
 on:
   push:
-    branches:
-      - main
-  workflow_dispatch:
+    branches: [ "main" ]
+    # Jab aap koi tag push karein (e.g., v1.0.0) tab bhi chalay
+    tags: [ 'v*.*.*' ]
+  pull_request:
+    branches: [ "main" ]
+
+env:
+  # Apni image ka naam yahan likh dein
+  IMAGE_NAME: ${{ secrets.DOCKER_USERNAME }}/nextjs-enterprise-app
+  REGISTRY: docker.io
 
 jobs:
-  build-and-push:
+  # JOB 1: Code Quality Check (Security & Best Practices)
+  check-quality:
+    name: 🔍 Lint Dockerfile
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout source
+      - name: Checkout Code
+        uses: actions/checkout@v4
+      
+      # Hadolint Dockerfile ko scan karta hai best practices ke liye
+      - name: Lint Dockerfile
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: Dockerfile
+
+  # JOB 2: Build & Push Image
+  build-and-push:
+    name: 🐳 Build & Push Docker Image
+    runs-on: ubuntu-latest
+    needs: check-quality # Quality check pass hoga tabhi ye chalega
+    
+    steps:
+      - name: Checkout Code
         uses: actions/checkout@v4
 
-      # 2. Docker Buildx setup karega (Advanced caching ke liye zaroori hai)
+      # QEMU setup karte hain agar humein Multi-Arch build chahiye (e.g., ARM64 & AMD64)
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      # Buildx setup karte hain taake hum advanced Caching use kar sakein
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      # Docker Tags aur Labels ko automatic handle karne ke liye
+      - name: Extract Metadata (tags, labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+
+      # Docker Hub par Login (Sirf tab jab PR na ho)
       - name: Login to Docker Hub
+        if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
-      
-      - name: Build and push
+
+      # Asal Build Step
+      - name: Build and Push
         uses: docker/build-push-action@v5
         with:
           context: .
           file: ./Dockerfile
-          push: true
-          # Niche 'my-app-name' ko apni marzi se change kar lein
-          tags: ${{ secrets.DOCKER_USERNAME }}/portfolio:latest
-          # Caching: Yeh agli builds ko super fast bana dega
+          # Pull Request par push FALSE hoga, Push event par TRUE hoga
+          push: ${{ github.event_name != 'pull_request' }}
+          # Metadata step se tags uthayega
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # Multi-platform support (Optional: Agar zaroorat na ho to hata dein)
+          platforms: linux/amd64,linux/arm64
+          # --- ENTERPRISE CACHING MAGIC ---
+          # Cache ko GitHub Actions ke internal cache mein rakhega
           cache-from: type=gha
+          # Naya cache write karega taake agli build fast ho
           cache-to: type=gha,mode=max
