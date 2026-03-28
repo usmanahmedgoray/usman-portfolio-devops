@@ -80,3 +80,6 @@ jobs:
           cache-from: type=gha
           # Naya cache write karega taake agli build fast ho
           cache-to: type=gha,mode=max
+          # Agar aap Docker Hub ke caching features use karna chahte hain to ye lines add karein:
+          # cache-from: type=registry,ref=${{ env.IMAGE_NAME }}:cache
+          # cache-to: type=registry,ref=${{ env.IMAGE_NAME }}:cache 
