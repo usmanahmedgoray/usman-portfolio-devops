@@ -113,7 +113,7 @@ usman-portfolio-devops/
 - **Timeout:** 10 minutes
 - **Steps:**
   1. Checkout code (SHA-pinned for security)
-  2. Hadolint Dockerfile linting
+  2. Hadolint Dockerfile linting (ignores: DL3018, DL3006)
   3. Gitleaks secret scanning
   4. Upload SARIF results to GitHub Security
 

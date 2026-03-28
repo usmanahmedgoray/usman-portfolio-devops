@@ -41,7 +41,7 @@ jobs:
         with:
           dockerfile: Dockerfile
           failure-threshold: warning
-          ignored: DL3018,DL3006
+          ignore: DL3018,DL3006
 
       - name: 🔐 Check for Secrets in Code (Gitleaks)
         uses: gitleaks/gitleaks-action@v2
