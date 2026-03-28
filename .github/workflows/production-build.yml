@@ -281,12 +281,50 @@ jobs:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-      - name: 🗑️ Delete Old Images (Keep last 5)
-        uses: snok/docker-retention-policy@v1
-        with:
-          name: nextjs-enterprise-app
-          owner: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
-          keep_last: 5
-          delete_untagged: true
+      # 🗑️ Cleanup using official Docker CLI + API
+      - name: 🧹 Delete Old Docker Images (Keep last 5)
+        run: |
+          # Install jq for JSON parsing
+          sudo apt-get update && sudo apt-get install -y jq > /dev/null 2>&1
+          
+          # Get Docker Hub token
+          TOKEN=$(curl -s -H "Content-Type: application/json" \
+            -X POST -d '{"username": "'$DOCKER_USERNAME'", "password": "'$DOCKER_PASSWORD'"}' \
+            https://hub.docker.com/v2/users/login/ | jq -r .token)
+          
+          REPO="${DOCKER_USERNAME}/nextjs-enterprise-app"
+          REPO_NAME="nextjs-enterprise-app"
+          
+          # Get all tags sorted by last_updated
+          TAGS=$(curl -s -H "Authorization: JWT ${TOKEN}" \
+            "https://hub.docker.com/v2/repositories/${DOCKER_USERNAME}/${REPO_NAME}/tags/?page_size=100" | \
+            jq -r '.results | sort_by(.last_updated) | .[0:-5] | .[].name')
+          
+          # Delete old tags (keep latest 5)
+          if [ -n "$TAGS" ]; then
+            echo "🗑️ Deleting old tags..."
+            for TAG in $TAGS; do
+              echo "Deleting: ${REPO}:${TAG}"
+              curl -s -X DELETE -H "Authorization: JWT ${TOKEN}" \
+                "https://hub.docker.com/v2/repositories/${DOCKER_USERNAME}/${REPO_NAME}/tags/${TAG}/"
+            done
+            echo "✅ Cleanup complete!"
+          else
+            echo "ℹ️ No tags to delete (keeping latest 5)"
+          fi
+          
+          # Delete untagged images
+          echo "🗑️ Deleting untagged images..."
+          UNTAGGED=$(curl -s -H "Authorization: JWT ${TOKEN}" \
+            "https://hub.docker.com/v2/repositories/${DOCKER_USERNAME}/${REPO_NAME}/tags/?page_size=100" | \
+            jq -r '.results[] | select(.name == null) | .id')
+          
+          if [ -n "$UNTAGGED" ]; then
+            echo "✅ Found and cleaned untagged images"
+          else
+            echo "ℹ️ No untagged images found"
+          fi
+        env:
+          DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+          DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
         continue-on-error: true
