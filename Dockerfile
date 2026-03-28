@@ -1,15 +1,13 @@
 # syntax=docker/dockerfile:1.7
-# hadolint ignore=DL3018
+# hadolint ignore=DL3018  # ✅ Alpine packages ke liye is rule ko ignore karein
 
 # -------- Base Stage --------
 FROM node:20-alpine3.20 AS base
 
 WORKDIR /app
 
-# ✅ Pinned versions for reproducibility
-RUN apk add --no-cache \
-    libc6-compat=1.2.5-r0 \
-    dumb-init=1.2.5-r2 \
+# ✅ NO VERSION PINS - Latest stable packages use karein
+RUN apk add --no-cache libc6-compat dumb-init \
  && addgroup -g 1001 -S nodejs \
  && adduser -S nextjs -u 1001 -G nodejs
 
@@ -34,9 +32,8 @@ RUN test -f /app/.next/standalone/server.js || (echo "❌ standalone build faile
 # -------- Production Runner Stage --------
 FROM node:20-alpine3.20 AS runner
 
-# ✅ Pinned version
-RUN apk add --no-cache \
-    dumb-init=1.2.5-r2 \
+# ✅ NO VERSION PINS here too
+RUN apk add --no-cache dumb-init \
  && addgroup -g 1001 -S nodejs \
  && adduser -S nextjs -u 1001 -G nodejs
 
