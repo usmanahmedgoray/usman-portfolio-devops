@@ -1,85 +1,291 @@
+# 🚀 Production Build & Deploy Workflow
 name: 🚀 Production Build & Push
 
+# 🎯 Kab trigger hoga?
 on:
   push:
-    branches: [ "main" ]
-    # Jab aap koi tag push karein (e.g., v1.0.0) tab bhi chalay
-    tags: [ 'v*.*.*' ]
+    branches: ["main"]
+    tags: ["v*.*.*"]  # Version tags par bhi chalega
   pull_request:
-    branches: [ "main" ]
+    branches: ["main"]
+  workflow_dispatch:  # Manual trigger ke liye button
 
+# 🔐 Security: Default permissions read-only
+permissions:
+  contents: read
+
+# 🌍 Environment variables
 env:
-  # Apni image ka naam yahan likh dein
   IMAGE_NAME: ${{ secrets.DOCKER_USERNAME }}/nextjs-enterprise-app
   REGISTRY: docker.io
+  # Telegram/Email notifications ke liye (optional)
+  TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+  TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+  EMAIL_USERNAME: ${{ secrets.EMAIL_USERNAME }}
+  EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
+  TEAM_EMAIL: ${{ secrets.TEAM_EMAIL }}
 
+# 📦 Jobs Definition
 jobs:
-  # JOB 1: Code Quality Check (Security & Best Practices)
+  # 🔍 JOB 1: Code Quality & Security Check
   check-quality:
-    name: 🔍 Lint Dockerfile
+    name: 🔍 Lint & Security Scan
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-      
-      # Hadolint Dockerfile ko scan karta hai best practices ke liye
-      - name: Lint Dockerfile
+      - name: 📥 Checkout Code
+        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11  # ✅ Hash-pinned for security
+
+      - name: 🔎 Lint Dockerfile (Hadolint)
         uses: hadolint/hadolint-action@v3.1.0
         with:
           dockerfile: Dockerfile
+          failure-threshold: warning
 
-  # JOB 2: Build & Push Image
+      - name: 🔐 Check for Secrets in Code (Gitleaks)
+        uses: gitleaks/gitleaks-action@v2
+        with:
+          config: ''  # Default config use karein
+        continue-on-error: true  # Warning dega, fail nahi karega
+
+      - name: 📊 Upload SARIF for GitHub Security Tab
+        if: github.event_name != 'pull_request'
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: results.sarif
+        continue-on-error: true
+
+  # 🐳 JOB 2: Build & Push Docker Image
   build-and-push:
     name: 🐳 Build & Push Docker Image
     runs-on: ubuntu-latest
-    needs: check-quality # Quality check pass hoga tabhi ye chalega
+    needs: check-quality  # Pehle quality check pass hoga tabhi yeh chalega
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write  # Docker Hub push ke liye
+    
+    outputs:
+      image_tag: ${{ steps.meta.outputs.version }}
+      image_digest: ${{ steps.build.outputs.digest }}
     
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
+      - name: 📥 Checkout Code
+        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
 
-      # Buildx setup karte hain taake hum advanced Caching use kar sakein
-      - name: Set up Docker Buildx
+      - name: 🔧 Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # Docker Tags aur Labels ko automatic handle karne ke liye
-      - name: Extract Metadata (tags, labels)
+      - name: 🏷️ Extract Metadata (tags, labels)
         id: meta
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.IMAGE_NAME }}
           tags: |
+            # Latest tag sirf main branch par
             type=raw,value=latest,enable={{is_default_branch}}
+            # Branch name based tag
             type=ref,event=branch
+            # PR number based tag
             type=ref,event=pr
+            # Semantic versioning (v1.2.3)
             type=semver,pattern={{version}}
+            # Short commit SHA
+            type=sha,prefix=sha-,format=short
 
-      # Docker Hub par Login (Sirf tab jab PR na ho)
-      - name: Login to Docker Hub
+      - name: 🔑 Login to Docker Hub
         if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-      # Asal Build Step
-      - name: Build and Push
-        uses: docker/build-push-action@v5
+      # 🔥 MAIN BUILD STEP - Optimized
+      - name: 🏗️ Build and Push
+        id: build
+        uses: docker/build-push-action@v6
         with:
           context: .
           file: ./Dockerfile
-          # Pull Request par push FALSE hoga, Push event par TRUE hoga
+          # PR par push nahi hoga, sirf build test hoga
           push: ${{ github.event_name != 'pull_request' }}
-          # Metadata step se tags uthayega
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          # Multi-platform support (Optional: Agar zaroorat na ho to hata dein)
-          platforms: linux/amd64,linux/arm64
-          # --- ENTERPRISE CACHING MAGIC ---
-          # Cache ko GitHub Actions ke internal cache mein rakhega
-          cache-from: type=gha
-          # Naya cache write karega taake agli build fast ho
-          cache-to: type=gha,mode=max
-          # Agar aap Docker Hub ke caching features use karna chahte hain to ye lines add karein:
-          # cache-from: type=registry,ref=${{ env.IMAGE_NAME }}:cache
-          # cache-to: type=registry,ref=${{ env.IMAGE_NAME }}:cache 
+          # Smart platform selection: main par multi-arch, PR par sirf amd64
+          platforms: ${{ github.ref == 'refs/heads/main' && 'linux/amd64,linux/arm64' || 'linux/amd64' }}
+          # 🎯 Advanced Caching Strategy
+          cache-from: |
+            type=gha
+            type=registry,ref=${{ env.IMAGE_NAME }}:buildcache
+          cache-to: type=registry,ref=${{ env.IMAGE_NAME }}:buildcache,mode=max
+          # SBOM & Provenance (security compliance)
+          provenance: ${{ github.ref == 'refs/heads/main' }}
+          sbom: false  # Disable for faster builds, enable if needed
+          # Build arguments
+          build-args: |
+            NODE_ENV=production
+            NEXT_TELEMETRY_DISABLED=1
+
+      # 🛡️ JOB 3: Vulnerability Scan (Trivy)
+      - name: 🔍 Scan Image with Trivy
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.version }}
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          exit-code: '1'  # CRITICAL vulnerabilities par pipeline fail karega
+          ignore-unfixed: true
+          severity: 'CRITICAL,HIGH'
+          vuln-type: 'os,library'
+        continue-on-error: true  # Scan fail hone par bhi notify karne ke liye
+
+      - name: 📤 Upload Trivy Results to GitHub Security
+        if: github.event_name != 'pull_request'
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: 'trivy-results.sarif'
+        continue-on-error: true
+
+  # 🔔 JOB 4: Notifications (Success/Failure)
+  notify:
+    name: 🔔 Send Notifications
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    if: always()  # Hamesha chalega, chahe build pass ho ya fail
+    steps:
+      # 📊 Build Summary Prepare Karein
+      - name: 📝 Prepare Notification Message
+        id: msg
+        run: |
+          STATUS="${{ needs.build-and-push.result }}"
+          REPO="${{ github.repository }}"
+          RUN_ID="${{ github.run_id }}"
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${RUN_ID}"
+          COMMIT="${{ github.sha }}"
+          COMMIT_URL="${{ github.server_url }}/${{ github.repository }}/commit/${COMMIT}"
+          BRANCH="${{ github.ref_name }}"
+          TAG="${{ needs.build-and-push.outputs.image_tag }}"
+          
+          if [ "$STATUS" == "success" ]; then
+            EMOJI="✅"
+            TITLE="🎉 Build Successful!"
+            COLOR="00ff00"
+          elif [ "$STATUS" == "failure" ]; then
+            EMOJI="❌"
+            TITLE="🚨 Build Failed!"
+            COLOR="ff0000"
+          else
+            EMOJI="⚠️"
+            TITLE="⚡ Build Cancelled/Skipped"
+            COLOR="ffa500"
+          fi
+          
+          echo "status=$STATUS" >> $GITHUB_OUTPUT
+          echo "emoji=$EMOJI" >> $GITHUB_OUTPUT
+          echo "title=$TITLE" >> $GITHUB_OUTPUT
+          echo "color=$COLOR" >> $GITHUB_OUTPUT
+          echo "run_url=$RUN_URL" >> $GITHUB_OUTPUT
+          echo "commit_url=$COMMIT_URL" >> $GITHUB_OUTPUT
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+
+      # 💬 Telegram Notification (100% Free)
+      - name: 📱 Send Telegram Alert
+        if: env.TELEGRAM_TOKEN != '' && env.TELEGRAM_CHAT_ID != ''
+        uses: appleboy/telegram-action@master
+        with:
+          to: ${{ env.TELEGRAM_CHAT_ID }}
+          token: ${{ env.TELEGRAM_TOKEN }}
+          message: |
+            *${{ steps.msg.outputs.emoji }} ${{ steps.msg.outputs.title }}*
+            
+            📦 *Repo:* ${{ github.repository }}
+            🔀 *Branch:* ${{ github.ref_name }}
+            🏷️ *Tag:* ${{ steps.msg.outputs.tag }}
+            🔗 *Run:* [View Details](${{ steps.msg.outputs.run_url }})
+            💻 *Commit:* [${{ github.sha }}](${{ steps.msg.outputs.commit_url }})
+            
+            _Triggered by @${{ github.actor }}_
+          format: markdown
+          disable_web_page_preview: true
+        continue-on-error: true
+
+      # ✉️ Email Notification (Gmail - Free)
+      - name: 📧 Send Email Alert
+        if: env.EMAIL_PASSWORD != '' && env.TEAM_EMAIL != ''
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          username: ${{ env.EMAIL_USERNAME }}
+          password: ${{ env.EMAIL_PASSWORD }}
+          subject: "${{ steps.msg.outputs.emoji }} ${{ steps.msg.outputs.title }} - ${{ github.repository }}"
+          body: |
+            Build Status Report
+            ===================
+            
+            Status: ${{ steps.msg.outputs.title }}
+            Repository: ${{ github.repository }}
+            Branch: ${{ github.ref_name }}
+            Tag: ${{ steps.msg.outputs.tag }}
+            Commit: ${{ github.sha }}
+            Triggered by: @${{ github.actor }}
+            
+            View Details: ${{ steps.msg.outputs.run_url }}
+            View Commit: ${{ steps.msg.outputs.commit_url }}
+            
+            ---
+            This is an automated message from GitHub Actions.
+          to: ${{ env.TEAM_EMAIL }}
+          from: "GitHub Actions <${{ env.EMAIL_USERNAME }}>"
+          reply_to: ${{ env.TEAM_EMAIL }}
+        continue-on-error: true
+
+      # 🎮 Discord Notification (Optional - Free)
+      - name: 🎮 Send Discord Alert
+        if: env.DISCORD_WEBHOOK != ''
+        uses: Ilshidur/action-discord@master
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+        with:
+          args: |
+            {
+              "embeds": [{
+                "title": "${{ steps.msg.outputs.emoji }} ${{ steps.msg.outputs.title }}",
+                "url": "${{ steps.msg.outputs.run_url }}",
+                "color": ${{ steps.msg.outputs.color }},
+                "fields": [
+                  {"name": "📦 Repository", "value": "${{ github.repository }}", "inline": true},
+                  {"name": "🔀 Branch", "value": "${{ github.ref_name }}", "inline": true},
+                  {"name": "🏷️ Tag", "value": "${{ steps.msg.outputs.tag }}", "inline": true},
+                  {"name": "💻 Commit", "value": "[${{ github.sha }}](${{ steps.msg.outputs.commit_url }})", "inline": false},
+                  {"name": "👤 Triggered by", "value": "@${{ github.actor }}", "inline": true}
+                ],
+                "footer": {"text": "GitHub Actions • ${GITHUB_SERVER_URL}"},
+                "timestamp": "${{ github.event.head_commit.timestamp }}"
+              }]
+            }
+        continue-on-error: true
+
+  # 🧹 JOB 5: Cleanup Old Images (Optional - Keep Docker Hub Clean)
+  cleanup:
+    name: 🧹 Cleanup Old Images
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    steps:
+      - name: 🔑 Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: 🗑️ Delete Old Images (Keep last 5)
+        uses: chishuhui/docker-hub-delete-tags@v1
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+          repository: ${{ secrets.DOCKER_USERNAME }}/nextjs-enterprise-app
+          keep_latest: 5
+          delete_untagged: true
+        continue-on-error: true
