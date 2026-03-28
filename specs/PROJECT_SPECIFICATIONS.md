@@ -142,7 +142,7 @@ usman-portfolio-devops/
 
 #### Job 4: Cleanup (`cleanup`)
 - **Condition:** Main branch push only
-- **Action:** Delete old Docker images (keep latest 5)
+- **Action:** Delete old Docker images (keep latest 5) using `snok/docker-retention-policy@v1`
 
 ### Docker Image Tagging Strategy
 | Tag Type | Pattern | Example |
