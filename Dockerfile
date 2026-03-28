@@ -1,14 +1,15 @@
 # syntax=docker/dockerfile:1.7
+# hadolint ignore=DL3018
 
 # -------- Base Stage --------
-# ✅ Use stable Alpine version
 FROM node:20-alpine3.20 AS base
 
 WORKDIR /app
 
-# ✅ Install packages WITHOUT invalid --retry flag
-# Network issues ke liye hum build-level retry use karenge (neeche dekhein)
-RUN apk add --no-cache libc6-compat dumb-init \
+# ✅ Pinned versions for reproducibility
+RUN apk add --no-cache \
+    libc6-compat=1.2.5-r0 \
+    dumb-init=1.2.5-r2 \
  && addgroup -g 1001 -S nodejs \
  && adduser -S nextjs -u 1001 -G nodejs
 
@@ -27,11 +28,15 @@ COPY . .
 
 RUN npm run build
 
+# ✅ Verify standalone output
+RUN test -f /app/.next/standalone/server.js || (echo "❌ standalone build failed" && exit 1)
+
 # -------- Production Runner Stage --------
 FROM node:20-alpine3.20 AS runner
 
-# ✅ Runner mein sirf dumb-init (libc6-compat already builder se aajayega agar needed)
-RUN apk add --no-cache dumb-init \
+# ✅ Pinned version
+RUN apk add --no-cache \
+    dumb-init=1.2.5-r2 \
  && addgroup -g 1001 -S nodejs \
  && adduser -S nextjs -u 1001 -G nodejs
 
@@ -42,15 +47,14 @@ ENV NODE_ENV=production \
     HOSTNAME="0.0.0.0" \
     NEXT_TELEMETRY_DISABLED=1
 
-COPY --from=builder --chown=nextjs:nodejs /app/public ./public
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
+COPY --from=builder --chown=nextjs:nodejs /app/public ./public
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 
 USER nextjs
 
 EXPOSE 3000
 
-# ✅ Health check with wget (Alpine compatible)
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
   CMD wget --no-verbose --tries=1 --spider http://localhost:3000/api/health || exit 1
 
